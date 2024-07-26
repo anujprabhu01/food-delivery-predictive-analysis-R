@@ -1,0 +1,2 @@
+# html code is not considered in source code language analysis by github
+*.html linguist-vendored

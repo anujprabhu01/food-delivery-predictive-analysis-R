@@ -1,0 +1,370 @@
+---
+title: "Predictive Modeling and Analysis of Online Food Delivery Services"
+author: "Anuj Prabhu"
+date: "1 April 2024"
+output:
+  pdf_document:
+    toc: true
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    theme: cerulean
+---
+
+## Background
+
+- In the modern era of digital convenience, online food ordering platforms have become an integral part of many people's lives, offering a convenient way to access a wide range of culinary options. Understanding the dynamics of customer behavior and satisfaction within this domain is crucial for platform operators to enhance service quality and cater to evolving consumer preferences.
+- The dataset under analysis contains comprehensive information collected from an online food ordering platform over a long period of time. It encompasses demographic attributes such as age, gender, marital status, occupation, and educational qualifications of customers, as well as location-specific details like their latitude, longitude, and pin code data. Additionally, it includes crucial feedback from customers regarding their satisfaction with the service, alongside the outcome of their orders.
+- With the aim of delving into the intricate relationship between demographic/location factors and online food ordering behavior, the project embarks on an exploratory journey. Through rigorous analysis and modeling techniques, it seeks to uncover valuable insights that can guide decision-making processes and improve service quality within the online food-ordering landscape.
+
+## Problem Statement
+
+- The objective of this project is to **analyze the impact of demographic attributes on customer feedback regarding their orders and the resultant order output**. By examining factors such as age, gender, location, and any other relevant demographic information, we aim to discern patterns in customer satisfaction and identify potential correlations between demographics and feedback sentiment. Thus, this analysis will provide **valuable** insights for **improving customer experience** and optimizing order fulfillment processes.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#library imports
+library(dplyr)
+library(ggplot2)
+library(plotrix)
+library(ggmap)
+library(sf)
+library(caTools)
+```
+
+## Loading the Dataset
+```{r}
+#Loading the Dataset
+online_foods <- read.csv("./data/onlinefoods.csv", header = TRUE, sep = ",", stringsAsFactors = TRUE)
+```
+
+- We load the "onlinefoods" dataset from our local directory and specify the parameters for loading the data into our project. To facilitate data manipulation, we convert strings to factors, leveraging the ease of handling factors. The dataset is then stored in the variable named online_foods.
+
+## General Summary
+```{r}
+#general summary
+head(online_foods)
+summary(online_foods)
+str(online_foods)
+```
+- The dataset comprises of 388 observations across 13 variables. Notably, variables such as Monthly.Income and Educational.Qualifications exhibit numerous factors that are very similar in nature. Additionally, the dataset contains a variable labeled "X," for which the dataset owner has not provided clarification regarding its significance or definition. Therefore, further exploration of variable "X" is warranted to ascertain its purpose and relevance within the dataset.
+
+```{r}
+#understand "X" variable better
+unique_values <- online_foods %>% 
+  distinct(X)
+unique_values
+```
+
+- Upon examination, the variable "X" is observed to have values labeled as "Yes" and "No," which lack clarity and fail to provide explanatory context. In addition to an absence of information about this variable on the dataset's source website, its ambiguity renders it irrelevant for our analysis. Consequently, we proceed to the data cleaning phase of this project, where the variable "X" will be removed from consideration.
+
+## Data Cleaning
+```{r}
+online_foods <- online_foods %>%
+  select(-X) #removing "X" variable from online_foods because no background has been provided about this attribute and it is not self-explanatory.
+
+#check for NA values in dataset
+has_na <- any(is.na(online_foods))
+has_na #no NA values in dataset
+```
+
+- We exclude the "X" variable from further analysis. Additionally, after confirming the absence of NA (missing) values in the dataset, our next step involves addressing the issue of numerous similar factors by amalgamating them where appropriate.
+
+```{r}
+#Excluding "Prefer not to say" Marital Status values from analysis (handling outlying data points)
+online_foods$Marital.Status <- as.character(online_foods$Marital.Status)
+online_foods <- online_foods %>%
+  filter(online_foods$Marital.Status != "Prefer not to say")
+online_foods$Marital.Status <- as.factor(online_foods$Marital.Status)
+
+#Combining like factors
+online_foods$Occupation <- as.character(online_foods$Occupation)
+online_foods$Occupation <- case_when(
+  online_foods$Occupation %in% c("Employee", "Self Employeed") ~ "Employed",
+  #online_foods$Occupation == "House wife" ~ "Housewife",
+  TRUE ~ as.character(online_foods$Occupation) # Keep other values unchanged
+)
+online_foods$Occupation <- as.factor(online_foods$Occupation)
+
+online_foods$Monthly.Income <- as.character(online_foods$Monthly.Income)
+online_foods$Monthly.Income <- case_when(
+  online_foods$Monthly.Income %in% c("10001 to 25000", "25001 to 50000") ~ "Average Monthly Income",
+  online_foods$Monthly.Income == "More than 50000" ~ "High Monthly Income",
+  online_foods$Monthly.Income %in% c("No Income", "Below Rs.10000") ~ "Low/No Monthly Income",
+  TRUE ~ as.character(online_foods$Monthly.Income) # Keep other values unchanged
+)
+online_foods$Monthly.Income <- as.factor(online_foods$Monthly.Income)
+
+online_foods$Educational.Qualifications <- as.character(online_foods$Educational.Qualifications)
+online_foods$Educational.Qualifications <- case_when(
+  online_foods$Educational.Qualifications %in% c("Post Graduate", "Ph.D") ~ "Higher Education",
+  online_foods$Educational.Qualifications %in% c("School", "Uneducated") ~ "Lower/No Education",
+  TRUE ~ as.character(online_foods$Educational.Qualifications) # Keep other values unchanged
+)
+online_foods$Educational.Qualifications <- as.factor(online_foods$Educational.Qualifications)
+
+online_foods$Output <- as.character(online_foods$Output)
+online_foods$Output <- case_when(
+  online_foods$Output == "No" ~ "Unsuccessful",
+  online_foods$Output == "Yes" ~ "Successful",
+  TRUE ~ as.character(online_foods$Output) # Keep other values unchanged
+)
+online_foods$Output <- as.factor(online_foods$Output)
+str(online_foods)
+```
+
+- After consolidating similar factors across multiple variables to alleviate ambiguity, we have enhanced the clarity of our data for exploratory analysis. For instance, the "Monthly.Income" variable originally encompassed values such as "Below Rs.10000", "More than 50000", and "No Income". As it can be observed, one label had a rupee symbol while others did not. These labels presented an inconsistency in the representation of income levels. To rectify this, we have transformed these labels into **three simplified categories**: **"Low/No Monthly Income", "Average Monthly Income", and "High Monthly Income"**. This streamlined data enables a clearer understanding of the relationship between a customer's monthly income and their online food ordering behavior. Similar refinement procedures have been applied to other variables, enhancing their interpretability and facilitating further analysis.
+
+```{r}
+#reordering factors according to customs levels
+online_foods$Marital.Status <- factor(online_foods$Marital.Status,
+                                      levels = c("Single", "Married"))
+online_foods$Occupation <- factor(online_foods$Occupation,
+                                  levels = c("Student", "House wife", "Employed"))
+online_foods$Monthly.Income <- factor(online_foods$Monthly.Income,
+                                      levels = c("Low/No Monthly Income", "Average Monthly Income",
+                                                 "High Monthly Income"))
+online_foods$Educational.Qualifications <- factor(online_foods$Educational.Qualifications,
+                                                  levels = c("Lower/No Education", "Graduate",
+                                                             "Higher Education"))
+online_foods$Output <- factor(online_foods$Output,
+                                      levels = c("Unsuccessful", "Successful"))
+summary(online_foods)
+head(online_foods)
+```
+
+- Following the consolidation of similar factors and the standardization of variable representations, we proceed to recode the factor levels of variables according to custom categories. This ensures uniformity across variables and enhances the interpretability of factors. With our data now cleaned and standardized, we are well-equipped to conduct exploratory analysis and derive meaningful insights from the dataset.
+
+## Exploratory Data Analysis
+
+- Firstly, we want to determine the location of the online food ordering platform. Initially, we consider that the monthly income of its consumers is expressed in rupees, indicating a connection to South Asian countries. However, the specific city, state, and country where the app is based remains unknown. Hence, we initiate an exploration to address this uncertainty.
+
+```{r}
+#understand which region orders are being placed from; we know currency is rupees but do not know country
+coordinates_df <- data.frame(
+  latitude = c(online_foods[which.min(online_foods$latitude), "latitude"],
+               online_foods[which.max(online_foods$latitude), "latitude"],
+               online_foods[which.min(online_foods$longitude), "latitude"],
+               online_foods[which.max(online_foods$longitude), "latitude"]),
+  longitude = c(online_foods[which.min(online_foods$latitude), "longitude"],
+                online_foods[which.max(online_foods$latitude), "longitude"],
+                online_foods[which.min(online_foods$longitude), "longitude"],
+                online_foods[which.max(online_foods$longitude), "longitude"])
+)
+coordinates_df
+```
+
+- First, we extract the four farthest points from where consumers in this sample have placed orders. Then, we use the Google Maps API to **reverse geocode** the latitude and longitude values into street addresses that we can recognize easily.  **Reverse geocoding** is the process of converting latitude and longitude coordinates into a human-readable address or location.
+
+```{r}
+API_KEY <- Sys.getenv("API_KEY")
+register_google(key = API_KEY)
+```
+
+```{r}
+region_info <- suppressWarnings(apply(coordinates_df, 1, function(row) { #apply function(row) to each row (1) of coordinates_df.
+  revgeocode(c(row["longitude"], row["latitude"]), output_type = "more")
+}))
+region_info #orders are placed from Begaluru, Karnataka, India.
+```
+
+- We apply the revgeocode() function to each pair of coordinate values and extract more information about them. We find out that the online food ordering platform is based in Bengaluru, Karnataka, India.
+
+- Next, we build Logistic Regression Models to predict the **Feedback** on orders and the **Output Status** of orders by consumers of the online food ordering app.
+
+### Building Logistic Regression Models
+
+#### Feedback Model
+
+```{r}
+# Set seed for reproducibility of test
+set.seed(123)
+
+# Splitting data into 80% training and 20% testing sets
+train_index <- sample(1:nrow(online_foods), 0.8 * nrow(online_foods))
+train_data <- online_foods[train_index, ]
+test_data <- online_foods[-train_index, ]
+
+# Logistic Regression Model for Feedback
+feedback_model <- glm(Feedback ~ ., data = train_data, family = binomial)
+
+# Summary of the model
+summary(feedback_model)
+```
+
+- Firstly, we obtain a train-test split of the online-foods dataset. This dataset is split according to **80%** training data and **20%** testing data.
+- Next, we model the Feedback variable based on every other attribute present in the dataset. To model the Feedback variable, we build a logistic regression model which predicts binary outcomes. The binary outcomes are "Positive" feedback or "Negative" feedback in this case. This is also why the family parameter of the model is set to be "binomial".
+- Lastly, we obtain a summary of our model. The summary is as follows:
+  + Generally, lower AIC values indicate better regression models. An AIC value of 178.3 indicates that the model fits reasonably well to the dataset.
+  + The residual deviance is significantly lower than the null deviance, which suggests that the model accounts for a considerable amount of variation in the data.
+
+```{r}
+# Predictions on the test set
+feedback_predictions <- predict(feedback_model, newdata = test_data, type = "response")
+
+# Convert probabilities to classes (Positive/Negative)
+feedback_predictions_class <- ifelse(feedback_predictions > 0.5, "Positive", "Negative")
+
+# Confusion Matrix for Feedback
+feedback_confusion_matrix <- table(Actual = test_data$Feedback, Predicted = feedback_predictions_class)
+print(feedback_confusion_matrix)
+```
+- Next, we initialize predictions on the test data using the logistic regression model we built above. Thus, we predict values for the Feedback column using our own model.
+- Then, we build a confusion matrix to compare our predicted values to the actual values that the Feedback column takes on.
+  + We can see the number of false positive, false negative, true positive, and true negative observations based on our model.
+
+```{r}
+# Extracting values from the confusion matrix
+true_negative <- feedback_confusion_matrix[1, 1]
+false_positive <- feedback_confusion_matrix[1, 2]
+false_negative <- feedback_confusion_matrix[2, 1]
+true_positive <- feedback_confusion_matrix[2, 2]
+
+# Calculate accuracy
+accuracy <- (true_positive + true_negative) / sum(feedback_confusion_matrix)
+cat("Accuracy:", accuracy, "\n")
+
+# Calculate precision
+precision <- true_positive / (true_positive + false_positive)
+cat("Precision:", precision, "\n")
+
+# Calculate recall
+recall <- true_positive / (true_positive + false_negative)
+cat("Recall (Sensitivity):", recall, "\n")
+```
+- Lastly, we calculate the **Accuracy**, **Precision**, and **Recall** of the model.
+- **The Feedback model is 84% accurate, 88% precise, and has a recall of 93%.**
+
+#### Output Model
+
+- We perform a similar procedure to build and analyze the **Output Model** that models the output status of orders based on every other attribute in the dataset.
+
+```{r}
+# Logistic Regression Model for Output
+output_model <- glm(Output ~ ., data = train_data, family = binomial)
+
+# Summary of the model
+summary(output_model)
+
+# Predictions on the test set
+output_predictions <- predict(output_model, newdata = test_data, type = "response")
+
+# Convert probabilities to classes (Successful/Unsuccessful)
+output_predictions_class <- ifelse(output_predictions > 0.5, "Successful", "Unsuccessful")
+
+# Confusion Matrix for Output
+output_confusion_matrix <- table(Actual = test_data$Output, Predicted = output_predictions_class)
+print(output_confusion_matrix)
+
+# Extracting values from the confusion matrix
+true_negative <- output_confusion_matrix[1, 1]
+false_positive <- output_confusion_matrix[1, 2]
+false_negative <- output_confusion_matrix[2, 1]
+true_positive <- output_confusion_matrix[2, 2]
+
+# Calculate accuracy
+accuracy <- (true_positive + true_negative) / sum(output_confusion_matrix)
+cat("Accuracy:", accuracy, "\n")
+
+# Calculate precision
+precision <- true_positive / (true_positive + false_positive)
+cat("Precision:", precision, "\n")
+
+# Calculate recall (sensitivity)
+recall <- true_positive / (true_positive + false_negative)
+cat("Recall (Sensitivity):", recall, "\n")
+```
+
+- Upon evaluating the Output model, it's noteworthy that the model exhibits an accuracy of only **16%**, precision of **40%**, and a recall of **10%**. 
+- This could be due to a class imbalance issue in the dataset, which occurs when one class (e.g., "Successful") is much more prevalent than the other. This can lead to biased model performance metrics.
+- Clearly, there is substantial room for improvement in this model, suggesting avenues for future enhancement.
+
+## Data Visualization
+
+### Customer Base by Occupation
+
+```{r}
+# Calculate frequencies of each occupation
+occupation_freq <- table(online_foods$Occupation)
+
+# Convert frequencies to a data frame
+occupation_df <- as.data.frame(occupation_freq)
+colnames(occupation_df) <- c("Occupation", "Frequency")
+#occupation_df
+pct <- round(occupation_df$Frequency/sum(occupation_df$Frequency)*100)
+lbls <- paste(occupation_df$Occupation, pct, sep = "; ")
+lbls <- paste(lbls, "%", sep = "")
+pie3D(occupation_df$Frequency, 
+      labels = lbls, labelcex = 1,
+      col = rainbow(length(lbls)),
+      main = "Pie Chart of Customer Base by Occupation")
+```
+
+- In this analysis, we utilize a three-dimensional pie chart to visually represent the distribution of the sample according to their occupations. 
+- The findings reveal that a significant portion (**55%**) of the consumer base of the online food ordering app comprises students, while housewives constitute a much smaller proportion (**2%**). 
+- Notably, housewives are distinctly categorized as an occupation group within this dataset, possibly indicating regional biases specific to Bengaluru, India.
+
+### Relationship between Order Output and Order Feedback Sentiment
+
+```{r}
+ggplot(online_foods, aes(x = Output, y = Feedback)) +
+  geom_point(aes(color = Occupation), position = position_jitter(width = 0.1, height = 0.1)) +
+  labs(title = "Relationship between Order Output and Order Feedback",
+       x = "Output", y = "Feedback")
+```
+
+- In this scatter plot (jittered to reduce noise and overlap among points), we observe the relationship between customer feedback sentiment and the success of their orders.
+- We can see that the majority of data points are clustered in the "positive" feedback and "successful" output region, indicating that most orders which are successfully completed have positive feedback reviews. This is symmetric for the exact opposite scenario, where orders that are unsuccessful receive negative reviews.
+- Interestingly, a significant portion of unsuccessful orders still receive positive reviews, implying a level of compassion and understanding among Bengaluru, India residents when utilizing online food ordering platforms.
+- Furthermore, students are primarily clustered in the "Positive, Successful" region, indicating their tendency to leave positive reviews for successful orders. Conversely, employees tend to leave the most negative reviews for unsuccessful orders.
+
+```{r}
+ggplot(online_foods, aes(x = Output, y = Feedback)) +
+  geom_point(aes(color = Educational.Qualifications), 
+             position = position_jitter(width = 0.1, height = 0.1)) +
+  labs(title = "Relationship between Order Output and Order Feedback",
+       x = "Output", y = "Feedback")
+```
+
+- Likewise, the plot above is recreated, with the distinction that the points are now grouped based on the educational qualifications of the customers.
+
+### Distribution of Order Feedback Sentiment by Educational Qualification
+
+```{r}
+ggplot(online_foods, aes(x = Educational.Qualifications, fill = Feedback)) +
+  geom_bar(position = "fill") +
+  labs(title = "Distribution of Order Feedback by Educational Qualifications", y = "Proportion", fill = "Order Feedback")
+```
+
+- Individuals with higher educational qualifications demonstrate a propensity to provide positive feedback on their orders significantly more often compared to those with lower levels of education.
+
+### Distribution of Order Output by Marital Status
+
+```{r}
+ggplot(online_foods, aes(x = Marital.Status, fill = Output)) +
+  geom_bar(position = "fill") +
+  labs(title = "Distribution of Order Output by Marital Status", y = "Proportion", fill = "Order Output")
+```
+
+- This plot suggests that married individuals tend to encounter a notably higher proportion of unsuccessful orders compared to single individuals. This trend may correlate with the observation that students in Bengaluru tend to leave more positive reviews on orders. This connection likely stems from the fact that students, who are typically single, experience a higher proportion of successful order transactions. (**based on regional biases of India, assuming students are generally single**)
+
+### Distribution of Order Output by Occupation
+
+```{r}
+ggplot(online_foods, aes(x = Occupation, fill = Output)) +
+  geom_bar(position = "fill") +
+  labs(title = "Distribution of Order Output by Occupation", y = "Proportion", fill = "Order Output")
+```
+
+- The bar plot indicates a significant disparity in successful order experiences among different demographic groups. Specifically, students receive a substantially higher number of successful orders from the online food ordering platform compared to housewives and employed individuals. Conversely, employed individuals exhibit the lowest proportion of successful order experiences relative to other groups.
+
+## Conclusion
+
+- Throughout this project, we've effectively executed data cleaning, analysis, and visualization tasks to glean valuable insights into the ordering behaviors of Bengaluru, India residents on an online food ordering platform. By systematically refining the dataset, exploring its nuances through analytical techniques, and crafting insightful visualizations, we've uncovered significant patterns and trends shaping consumer preferences and habits in the local online food delivery landscape.
+
+## Dataset link
+
+- Kaggle link to dataset source:
+[dataset](https://www.kaggle.com/datasets/sudarshan24byte/online-food-dataset/data)

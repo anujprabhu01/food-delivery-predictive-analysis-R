@@ -1,0 +1,16 @@
+# ignore .DS Store file
+.DS_Store
+
+#ignore .Rproj.user
+#tweet_sentiment_analysis/.Rproj.user
+*.Rproj.user
+
+#ignore .RData
+*.RData
+
+# ignore .Rhistory
+*.Rhistory
+
+#ignore .Renviron
+*.Renviron
+.Rproj.user
